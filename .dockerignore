@@ -1,0 +1,8 @@
+.git
+.github
+.env
+pb_data
+bin
+coverage.out
+*.md
+docker-compose.yml

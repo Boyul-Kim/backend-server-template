@@ -1,0 +1,14 @@
+# PocketBase runtime data (DB, uploads, backups)
+pb_data/
+
+# Build output
+bin/
+coverage.out
+
+# Local env
+.env
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
