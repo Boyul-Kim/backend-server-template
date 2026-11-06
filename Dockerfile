@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # ---- build ------------------------------------------------------------------
-FROM golang:1.27-alpine AS build
+# Go 1.27.3 (net/http DoS fixes and the eMudhra CA-compromise fix). Digest-pinned.
+FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS build
 
 WORKDIR /src
 
@@ -25,7 +26,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN mkdir -p /out/pb_data
 
 # ---- runtime ----------------------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot
+# debian13 is the distroless line that still receives updates (debian12 is EOL).
+# static supplies ca-certificates for SMTP, S3 and OAuth2. Digest-pinned.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 
 COPY --from=build /out/server /app/server
 COPY --from=build --chown=65532:65532 /out/pb_data /pb_data

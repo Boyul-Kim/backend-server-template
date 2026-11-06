@@ -18,11 +18,12 @@ backups, plus the pieces a production service needs on top of it.
 - Request ID propagation (`X-Request-Id`) into PocketBase's request logs, and HSTS.
 - Integration tests that run against a real, migrated PocketBase instance.
 - A distroless, non-root, static Docker image with a built-in healthcheck. Plus CI
-  (tidy, vet, race tests, golangci-lint, image build).
+  (tidy, vet, race tests, pinned golangci-lint, govulncheck, actionlint, zizmor,
+  image build, and a Trivy scan of fixable HIGH/CRITICAL issues).
 
 ## Quick start
 
-Requires Go 1.27+ (PocketBase v0.40 requires it).
+Requires Go 1.27.3+ (`toolchain go1.27.3` in `go.mod`; PocketBase v0.40.6 requires Go 1.27).
 
 ```sh
 cp .env.example .env
@@ -146,8 +147,10 @@ make docker-build                  # or: docker build -t my-api .
 docker compose up --build          # runs the prod image locally using .env
 ```
 
-The image is `distroless/static:nonroot` (~40 MB). It runs as UID 65532 with data in the
-`/pb_data` volume, and `HEALTHCHECK` runs `/app/server healthcheck`.
+The image is `gcr.io/distroless/static-debian13:nonroot`, digest-pinned in the
+Dockerfile (~40 MB). It runs as UID 65532 with data in the `/pb_data` volume, and
+`HEALTHCHECK` runs `/app/server healthcheck`. Dependabot refreshes the build and
+runtime digests.
 
 **Production checklist**
 
