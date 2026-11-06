@@ -13,6 +13,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid configuration:\n%v", err)
 	}
+	for _, warning := range cfg.Warnings {
+		log.Printf("WARN: %s", warning)
+	}
 
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := app.Healthcheck(cfg); err != nil {

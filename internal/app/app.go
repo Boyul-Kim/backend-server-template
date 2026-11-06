@@ -3,6 +3,8 @@
 package app
 
 import (
+	"log/slog"
+
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
@@ -47,6 +49,12 @@ func Register(app core.App, cfg config.Config) {
 		// superusers collection are guaranteed to exist.
 		if err := applySettings(e.App, cfg); err != nil {
 			return err
+		}
+		if err := lockEnvOwnedSettings(e.App, cfg); err != nil {
+			return err
+		}
+		for _, warning := range cfg.Warnings {
+			e.App.Logger().Warn(warning, slog.String("event", "insecure_config"))
 		}
 		if err := ensureSuperuser(e.App, cfg); err != nil {
 			return err

@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -10,8 +11,14 @@ import (
 )
 
 // applySettings makes the environment the source of truth for PocketBase
-// settings. Values that are not set in the environment keep whatever is
-// stored in the database, so they can still be managed from the dashboard.
+// settings.
+//
+// Security lists (trusted proxy, superuser IPs, rate-limit excluded IPs)
+// are written on every boot, including clearing them when the environment
+// variable is unset. Optional integrations such as S3 and the backup
+// schedule still keep the stored value when their variables are unset.
+// In production, env-owned settings are also locked at runtime
+// (see lockEnvOwnedSettings).
 func applySettings(app core.App, cfg config.Config) error {
 	s := app.Settings()
 
@@ -23,7 +30,9 @@ func applySettings(app core.App, cfg config.Config) error {
 	}
 	s.Meta.HideControls = cfg.HideControls
 
-	if cfg.SMTP.Host != "" {
+	if cfg.SMTPDisabled {
+		s.SMTP.Enabled = false
+	} else if cfg.SMTP.Host != "" {
 		s.SMTP.Enabled = true
 		s.SMTP.Host = cfg.SMTP.Host
 		s.SMTP.Port = cfg.SMTP.Port
@@ -52,11 +61,22 @@ func applySettings(app core.App, cfg config.Config) error {
 		s.Backups.Cron = cfg.Backups.Cron
 		s.Backups.CronMaxKeep = cfg.Backups.MaxKeep
 	}
+	if cfg.Backups.S3Secret != "" {
+		s.Backups.S3.Secret = cfg.Backups.S3Secret
+	}
 
 	s.RateLimits.Enabled = cfg.RateLimitEnabled
-	if len(cfg.TrustedProxyHeaders) > 0 {
-		s.TrustedProxy.Headers = cfg.TrustedProxyHeaders
+	s.RateLimits.ExcludedIPs = cloneStrings(cfg.RateLimitExcludedIPs)
+	// Rightmost-IP is the only mode this template applies. `none` and an
+	// unset list both clear a previously stored header so a stale
+	// X-Forwarded-For cannot outlive its removal from the environment.
+	if cfg.TrustedProxyNone || len(cfg.TrustedProxyHeaders) == 0 {
+		s.TrustedProxy.Headers = nil
+	} else {
+		s.TrustedProxy.Headers = slices.Clone(cfg.TrustedProxyHeaders)
 	}
+	s.TrustedProxy.UseLeftmostIP = false
+	s.SuperuserIPs = cloneStrings(cfg.SuperuserIPs)
 	s.Logs.MaxDays = cfg.LogsMaxDays
 
 	if err := app.Save(s); err != nil {
@@ -97,4 +117,13 @@ func ensureSuperuser(app core.App, cfg config.Config) error {
 
 	app.Logger().Info("created bootstrap superuser", "email", cfg.SuperuserEmail)
 	return nil
+}
+
+// cloneStrings returns nil for an empty list so stored JSON is cleared
+// rather than left as a previous value. Nil and empty compare equal.
+func cloneStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	return slices.Clone(in)
 }
