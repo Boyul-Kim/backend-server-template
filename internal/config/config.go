@@ -74,7 +74,8 @@ type Config struct {
 
 	RateLimitEnabled     bool     // RATE_LIMIT_ENABLED
 	RateLimitExcludedIPs []string // RATE_LIMIT_EXCLUDED_IPS
-	// TrustedProxyNone is true when TRUSTED_PROXY_HEADERS=none.
+	// TrustedProxyNone is true when TRUSTED_PROXY_HEADERS is "none"
+	// (any case, and not combined with header names).
 	TrustedProxyNone    bool
 	TrustedProxyHeaders []string // TRUSTED_PROXY_HEADERS
 	LogsMaxDays         int      // LOGS_MAX_DAYS
@@ -89,6 +90,7 @@ type Config struct {
 	encryptionKeyFromFile   bool
 	rateLimitExplicitOff    bool
 	hideControlsExplicitOff bool
+	trustedProxyInvalid     bool
 }
 
 type SMTP struct {
@@ -199,11 +201,13 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		SenderAddress: e.str("SMTP_SENDER_ADDRESS", ""),
 	}
 
-	proxy := e.str("TRUSTED_PROXY_HEADERS", "")
-	if proxy == "none" {
-		cfg.TrustedProxyNone = true
+	none, headers, proxyErr := parseTrustedProxyHeaders(e.str("TRUSTED_PROXY_HEADERS", ""))
+	if proxyErr != nil {
+		e.errs = append(e.errs, proxyErr)
+		cfg.trustedProxyInvalid = true
 	} else {
-		cfg.TrustedProxyHeaders = splitComma(proxy)
+		cfg.TrustedProxyNone = none
+		cfg.TrustedProxyHeaders = headers
 	}
 
 	cfg.RateLimitExcludedIPs = e.list("RATE_LIMIT_EXCLUDED_IPS")
@@ -289,7 +293,7 @@ func (c Config) validate() ([]string, error) {
 				}
 			}
 		}
-		if !c.TrustedProxyNone && len(c.TrustedProxyHeaders) == 0 {
+		if !c.trustedProxyInvalid && !c.TrustedProxyNone && len(c.TrustedProxyHeaders) == 0 {
 			errs = append(errs, errors.New(`TRUSTED_PROXY_HEADERS is required in production (set header names or "none")`))
 		}
 		if c.rateLimitExplicitOff && !c.AllowInsecureOverrides {
@@ -500,6 +504,57 @@ func (e *envReader) explicitFalse(key string) bool {
 
 func (e *envReader) list(key string) []string {
 	return splitComma(e.str(key, ""))
+}
+
+// parseTrustedProxyHeaders reads TRUSTED_PROXY_HEADERS.
+//
+// "none" in any case, and only on its own, clears the trusted proxy.
+// A boolean such as "false" is rejected: it would otherwise be stored as a
+// header name the client can send to spoof RealIP. Every other entry must be
+// one HTTP header-field token (RFC 9110 tchar), so a value cannot smuggle a
+// second header or whitespace.
+func parseTrustedProxyHeaders(raw string) (none bool, headers []string, err error) {
+	parts := splitComma(raw)
+	if len(parts) == 0 {
+		return false, nil, nil
+	}
+	if len(parts) == 1 && strings.EqualFold(parts[0], "none") {
+		return true, nil, nil
+	}
+	for _, header := range parts {
+		if strings.EqualFold(header, "none") {
+			return false, nil, errors.New(`TRUSTED_PROXY_HEADERS "none" cannot be combined with other headers`)
+		}
+		if _, boolErr := strconv.ParseBool(header); boolErr == nil {
+			return false, nil, fmt.Errorf("TRUSTED_PROXY_HEADERS %q is a boolean, not a header name; set header names or \"none\"", header)
+		}
+		if !validHeaderToken(header) {
+			return false, nil, fmt.Errorf("TRUSTED_PROXY_HEADERS %q is not a valid header name", header)
+		}
+	}
+	return false, parts, nil
+}
+
+// validHeaderToken reports whether s is a single RFC 9110 header-field token.
+func validHeaderToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !isTchar(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTchar(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	default:
+		return strings.ContainsRune("!#$%&'*+-.^_`|~", r)
+	}
 }
 
 func splitComma(v string) []string {

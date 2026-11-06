@@ -160,6 +160,21 @@ func TestProductionRejectsInsecureConfig(t *testing.T) {
 			want:  "TRUSTED_PROXY_HEADERS",
 		},
 		{
+			name:  "false is not a trusted proxy header",
+			tweak: func(m map[string]string) { m["TRUSTED_PROXY_HEADERS"] = "false" },
+			want:  "boolean",
+		},
+		{
+			name:  "none mixed with a header",
+			tweak: func(m map[string]string) { m["TRUSTED_PROXY_HEADERS"] = "none,X-Forwarded-For" },
+			want:  "cannot be combined",
+		},
+		{
+			name:  "header name with whitespace",
+			tweak: func(m map[string]string) { m["TRUSTED_PROXY_HEADERS"] = "X Forwarded For" },
+			want:  "not a valid header name",
+		},
+		{
 			name:  "CORS origin with a path",
 			tweak: func(m map[string]string) { m["CORS_ORIGINS"] = "https://example.com/app" },
 			want:  "path",
@@ -256,14 +271,16 @@ func TestProductionAllowsExplicitEscapeHatches(t *testing.T) {
 	})
 
 	t.Run("trusted proxy none", func(t *testing.T) {
-		env := validProductionEnv()
-		env["TRUSTED_PROXY_HEADERS"] = "none"
-		cfg, err := load(lookupFrom(env))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !cfg.TrustedProxyNone || len(cfg.TrustedProxyHeaders) != 0 {
-			t.Fatalf("none = %v headers = %v", cfg.TrustedProxyNone, cfg.TrustedProxyHeaders)
+		for _, raw := range []string{"none", "NONE", "None"} {
+			env := validProductionEnv()
+			env["TRUSTED_PROXY_HEADERS"] = raw
+			cfg, err := load(lookupFrom(env))
+			if err != nil {
+				t.Fatalf("%s: %v", raw, err)
+			}
+			if !cfg.TrustedProxyNone || len(cfg.TrustedProxyHeaders) != 0 {
+				t.Fatalf("%s: none = %v headers = %v", raw, cfg.TrustedProxyNone, cfg.TrustedProxyHeaders)
+			}
 		}
 	})
 }

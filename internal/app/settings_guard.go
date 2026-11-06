@@ -158,6 +158,18 @@ func diffLocked(a, b *core.Settings) []string {
 	if a.Meta.HideControls != b.Meta.HideControls {
 		fields = append(fields, "hideControls")
 	}
+	// App URL and the sender identity build reset and OAuth links. Leaving
+	// them editable lets a superuser point them at http://attacker. App name
+	// stays editable.
+	if a.Meta.AppURL != b.Meta.AppURL {
+		fields = append(fields, "appURL")
+	}
+	if a.Meta.SenderAddress != b.Meta.SenderAddress {
+		fields = append(fields, "senderAddress")
+	}
+	if a.Meta.SenderName != b.Meta.SenderName {
+		fields = append(fields, "senderName")
+	}
 	return fields
 }
 
@@ -174,6 +186,9 @@ func restoreLocked(dst, src *core.Settings) {
 	dst.Batch = src.Batch
 	dst.Logs = src.Logs
 	dst.Meta.HideControls = src.Meta.HideControls
+	dst.Meta.AppURL = src.Meta.AppURL
+	dst.Meta.SenderAddress = src.Meta.SenderAddress
+	dst.Meta.SenderName = src.Meta.SenderName
 }
 
 func eqStrings(a, b []string) bool {

@@ -116,6 +116,40 @@ func TestProductionRejectsEnvOwnedSettingsUpdates(t *testing.T) {
 	})
 
 	run(tests.ApiScenario{
+		Name:            "appURL",
+		Method:          http.MethodPatch,
+		URL:             "/api/settings",
+		Body:            strings.NewReader(`{"meta":{"appURL":"http://attacker.example"}}`),
+		ExpectedStatus:  http.StatusForbidden,
+		ExpectedContent: []string{"cannot be changed at runtime", "appURL"},
+		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
+			if app.Settings().Meta.AppURL != "https://api.example.com" {
+				t.Fatalf("app URL = %q", app.Settings().Meta.AppURL)
+			}
+			assertLogContains(t, app, auditUpdateRejected, "appURL")
+		},
+	})
+
+	run(tests.ApiScenario{
+		Name:           "sender identity",
+		Method:         http.MethodPatch,
+		URL:            "/api/settings",
+		Body:           strings.NewReader(`{"meta":{"senderAddress":"attacker@evil.example","senderName":"Attacker"}}`),
+		ExpectedStatus: http.StatusForbidden,
+		ExpectedContent: []string{
+			"cannot be changed at runtime",
+			"senderAddress",
+			"senderName",
+		},
+		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
+			if app.Settings().Meta.SenderAddress != "no-reply@example.com" || app.Settings().Meta.SenderName == "Attacker" {
+				t.Fatalf("sender changed: name=%q address=%q", app.Settings().Meta.SenderName, app.Settings().Meta.SenderAddress)
+			}
+			assertLogContains(t, app, auditUpdateRejected, "senderAddress")
+		},
+	})
+
+	run(tests.ApiScenario{
 		Name:           "meta app name is still editable",
 		Method:         http.MethodPatch,
 		URL:            "/api/settings",
@@ -127,6 +161,9 @@ func TestProductionRejectsEnvOwnedSettingsUpdates(t *testing.T) {
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
 			if app.Settings().Meta.AppName != "Renamed" {
 				t.Fatalf("app name = %q", app.Settings().Meta.AppName)
+			}
+			if app.Settings().Meta.AppURL != "https://api.example.com" {
+				t.Fatalf("app URL changed with the name: %q", app.Settings().Meta.AppURL)
 			}
 			if !app.Settings().Meta.HideControls {
 				t.Fatal("hideControls was cleared")
@@ -198,12 +235,16 @@ func TestSettingsDriftRevertedOnReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	senderName := testApp.Settings().Meta.SenderName
 	injectSettings(t, testApp, func(s *core.Settings) {
 		s.RateLimits.Enabled = false
 		s.RateLimits.ExcludedIPs = []string{"203.0.113.8"}
 		s.TrustedProxy.Headers = []string{"X-Injected"}
 		s.TrustedProxy.UseLeftmostIP = true
 		s.SuperuserIPs = []string{"203.0.113.9"}
+		s.Meta.AppURL = "http://attacker.example"
+		s.Meta.SenderAddress = "attacker@evil.example"
+		s.Meta.SenderName = "Attacker"
 	})
 	if err := testApp.ReloadSettings(); err != nil {
 		t.Fatal(err)
@@ -219,7 +260,13 @@ func TestSettingsDriftRevertedOnReload(t *testing.T) {
 	if len(got.SuperuserIPs) != 1 || got.SuperuserIPs[0] != "10.0.0.0/8" {
 		t.Fatalf("superuser IPs not reverted: %v", got.SuperuserIPs)
 	}
-	assertLogContains(t, testApp, auditDriftReverted, "settings_drift")
+	if got.Meta.AppURL != "https://api.example.com" {
+		t.Fatalf("app URL not reverted: %q", got.Meta.AppURL)
+	}
+	if got.Meta.SenderAddress != "no-reply@example.com" || got.Meta.SenderName != senderName {
+		t.Fatalf("sender not reverted: name=%q address=%q", got.Meta.SenderName, got.Meta.SenderAddress)
+	}
+	assertLogContains(t, testApp, auditDriftReverted, "appURL")
 }
 
 func createSuperuser(t testing.TB, app core.App, email, password string) string {

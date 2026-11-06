@@ -125,7 +125,7 @@ escape hatches. Each one logs a warning at startup.
 | `SMTP_DISABLED` | `false` | *prod* escape hatch, only when `AUTH_SIGNUP=closed`, `SUPERUSER_MFA=false`, and `SUPERUSER_IPS` is set. Logs a warning |
 | `S3_*` | local disk | turns on when `S3_BUCKET` is set. `S3_SECRET_FILE` is supported |
 | `BACKUPS_*` | off | turns on when `BACKUPS_CRON` is set. `BACKUPS_S3_SECRET` / `BACKUPS_S3_SECRET_FILE` sets the backups S3 secret when present |
-| `TRUSTED_PROXY_HEADERS` | — | *prod*: header list (for example `X-Forwarded-For`) or `none`. `none` clears stored headers and keeps leftmost-IP off |
+| `TRUSTED_PROXY_HEADERS` | — | *prod*: header names (for example `X-Forwarded-For`) or `none`. `none` is case-insensitive, cannot be mixed with headers, and clears stored headers. A boolean such as `false` is rejected |
 | `RATE_LIMIT_EXCLUDED_IPS` | empty | Applied on every boot, including clearing when unset. Listed IPs skip rate limiting entirely |
 | `RATE_LIMIT_ENABLED` / `HIDE_CONTROLS` | `true` in prod | *prod*: `false` is refused unless `ALLOW_INSECURE_OVERRIDES=true`, which logs a warning |
 | `ALLOW_INSECURE_OVERRIDES` | `false` | Allows those two toggles to be turned off |
@@ -139,12 +139,12 @@ variable is unset.
 
 In production those env-owned settings are locked at runtime. A superuser
 `PATCH /api/settings` that changes the trusted proxy, superuser IPs, rate
-limits (including excluded IPs), SMTP, S3, backups, batch, logs, or
-`hideControls` gets **403** and an audit log entry. If a stored value drifts,
-for example through a direct write to `_params`, the next settings reload puts
-the environment back and logs an alert. PocketBase itself allows these live
-edits; this template blocks them. Non-security meta such as the app name can
-still be edited in the dashboard.
+limits (including excluded IPs), SMTP, S3, backups, batch, logs,
+`hideControls`, the app URL, or the sender name or address gets **403** and an
+audit log entry. If a stored value drifts, for example through a direct write
+to `_params`, the next settings reload puts the environment back and logs an
+alert. PocketBase itself allows these live edits; this template blocks them.
+The app name can still be edited in the dashboard.
 
 `/api/sql` is unchanged here. Restricting it in production is P0-5.
 
