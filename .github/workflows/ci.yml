@@ -8,14 +8,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Pull requests restore nothing and write nothing. Only push to master saves the cache.
+          cache: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'true' || 'false' }}
       - name: Verify go.mod is tidy
         run: go mod tidy -diff
       - name: Vet
@@ -23,30 +33,104 @@ jobs:
       - name: Test
         run: go test -race -count=1 ./...
 
-  lint:
+  govulncheck:
+    name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v8
+          cache: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'true' || 'false' }}
+      # Fails when a vulnerable symbol is reachable. Module-only findings do not fail the build.
+      - name: govulncheck
+        run: make vuln
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: latest
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'true' || 'false' }}
+      # make lint installs the same golangci-lint version it runs locally.
+      - name: Lint
+        run: make lint
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+      - name: Lint workflows
+        run: ./actionlint -color
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          # v1.32.0 is hash-locked inside this action release.
+          version: v1.32.0
+          persona: regular
+          advanced-security: "false"
+          annotations: "true"
 
   docker:
+    name: docker
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     needs: [test]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: false
+          load: true
+          # Attestations turn the loaded tag into an index Trivy does not scan cleanly.
+          provenance: false
+          sbom: false
+          tags: api-template:ci
           build-args: |
             VERSION=${{ github.sha }}
             COMMIT=${{ github.sha }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Write the Actions cache only on push to master. Pull requests read it and do not save.
+          cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'type=gha,mode=max' || '' }}
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: api-template:ci
+          format: table
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "true"
+          exit-code: "1"
+          version: v0.76.2
+          # The vulnerability DB is downloaded for this run. Do not write an Actions cache from a pull request.
+          cache: "false"

@@ -18,7 +18,8 @@ backups, plus the pieces a production service needs on top of it.
 - Request ID propagation (`X-Request-Id`) into PocketBase's request logs, and HSTS.
 - Integration tests that run against a real, migrated PocketBase instance.
 - A distroless, non-root, static Docker image with a built-in healthcheck. Plus CI
-  (tidy, vet, race tests, golangci-lint, image build).
+  (tidy, vet, race tests, pinned golangci-lint, govulncheck, actionlint, zizmor,
+  image build, and a Trivy scan of fixable HIGH/CRITICAL issues).
 
 ## Quick start
 
