@@ -68,17 +68,19 @@ jobs:
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install actionlint
-        run: |
-          set -euo pipefail
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Pull requests restore nothing and write nothing. Only push to master saves the cache.
+          cache: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'true' || 'false' }}
+      # Sumdb-verified. The previous curl|bash downloader did not check a checksum (Securie L-1).
       - name: Lint workflows
-        run: ./actionlint -color
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
 
   zizmor:
     name: zizmor
