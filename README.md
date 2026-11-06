@@ -22,7 +22,7 @@ backups, plus the pieces a production service needs on top of it.
 
 ## Quick start
 
-Requires Go 1.27+ (PocketBase v0.40 requires it).
+Requires Go 1.27.3+ (`toolchain go1.27.3` in `go.mod`; PocketBase v0.40.6 requires Go 1.27).
 
 ```sh
 cp .env.example .env
@@ -146,8 +146,10 @@ make docker-build                  # or: docker build -t my-api .
 docker compose up --build          # runs the prod image locally using .env
 ```
 
-The image is `distroless/static:nonroot` (~40 MB). It runs as UID 65532 with data in the
-`/pb_data` volume, and `HEALTHCHECK` runs `/app/server healthcheck`.
+The image is `gcr.io/distroless/static-debian13:nonroot`, digest-pinned in the
+Dockerfile (~40 MB). It runs as UID 65532 with data in the `/pb_data` volume, and
+`HEALTHCHECK` runs `/app/server healthcheck`. Dependabot refreshes the build and
+runtime digests.
 
 **Production checklist**
 
