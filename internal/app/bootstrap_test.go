@@ -63,6 +63,46 @@ func TestApplySettings(t *testing.T) {
 	if s.S3.Enabled {
 		t.Error("S3 must stay disabled when S3_BUCKET is unset")
 	}
+	if s.TrustedProxy.UseLeftmostIP {
+		t.Error("UseLeftmostIP should stay false")
+	}
+}
+
+func TestSecurityListsFollowEnv(t *testing.T) {
+	pb := testutil.NewApp(t)
+	defer pb.Cleanup()
+
+	s := pb.Settings()
+	s.TrustedProxy.Headers = []string{"X-Forwarded-For"}
+	s.TrustedProxy.UseLeftmostIP = true
+	s.RateLimits.ExcludedIPs = []string{"203.0.113.5"}
+	s.SuperuserIPs = []string{"198.51.100.10"}
+	s.SMTP.Enabled = true
+	if err := pb.Save(s); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{TrustedProxyNone: true, SMTPDisabled: true}
+	if err := applySettings(pb, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := pb.ReloadSettings(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := pb.Settings()
+	if len(got.TrustedProxy.Headers) != 0 || got.TrustedProxy.UseLeftmostIP {
+		t.Fatalf("TRUSTED_PROXY_HEADERS=none did not clear stored proxy: %+v", got.TrustedProxy)
+	}
+	if len(got.RateLimits.ExcludedIPs) != 0 {
+		t.Fatalf("excluded IPs = %v, want empty when unset", got.RateLimits.ExcludedIPs)
+	}
+	if len(got.SuperuserIPs) != 0 {
+		t.Fatalf("superuser IPs = %v, want empty when unset", got.SuperuserIPs)
+	}
+	if got.SMTP.Enabled {
+		t.Fatal("SMTP_DISABLED did not turn SMTP off")
+	}
 }
 
 func TestEnsureSuperuser(t *testing.T) {

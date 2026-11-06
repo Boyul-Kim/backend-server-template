@@ -8,9 +8,12 @@ backups, plus the pieces a production service needs on top of it.
 **What the template adds to PocketBase**
 
 - Config from environment variables, validated at startup. Production refuses to start
-  with a missing encryption key, a missing `APP_URL` or wildcard CORS.
+  with a weak or missing encryption key, a non-HTTPS `APP_URL`, wildcard or non-HTTPS
+  CORS, rate limits or schema controls turned off, no trusted-proxy decision, or no
+  SMTP, unless an explicit escape hatch is set.
 - Environment variables are the source of truth for settings (SMTP, S3, rate limits,
-  backups, trusted proxy), so each deploy is reproducible.
+  backups, trusted proxy). Security lists are cleared when removed from the
+  environment. In production, env-owned security settings cannot be changed live.
 - A superuser is created from env on first start, so there's no browser installer step.
 - Schema is kept as code in Go migrations. In dev the dashboard writes them for you; in
   prod the schema controls are hidden.
@@ -98,21 +101,63 @@ routes in `api.go`, the notes migration, and their tests.
 All configuration comes from environment variables. The annotated list is in
 [.env.example](.env.example). `make` targets load `.env` automatically.
 
+In production the process refuses to start unless `APP_URL` is `https://`, the
+encryption key is a real 32-character secret, every CORS origin is an absolute
+`https://` origin with no path, `TRUSTED_PROXY_HEADERS` is set (or `none`),
+SMTP is configured, and rate limits and hidden schema controls stay on.
+`ALLOW_INSECURE_HTTP`, `ALLOW_INSECURE_OVERRIDES`, and `SMTP_DISABLED` are the
+escape hatches. Each one logs a warning at startup.
+
 | Variable | Default | Notes |
 |---|---|---|
-| `APP_ENV` | `development` | `production` enables rate limits and hidden schema controls, turns off automigrate, and enforces the rows marked *prod* |
+| `APP_ENV` | `development` | `production` enables the fail-closed checks, turns off automigrate, and locks env-owned settings |
 | `HTTP_ADDR` | `127.0.0.1:8090` | Docker image sets `0.0.0.0:8090` |
-| `CORS_ORIGINS` | `*` (PocketBase) | *prod*: explicit list required |
-| `PB_ENCRYPTION_KEY` | — | *prod*: 32 chars, encrypts stored settings. Back it up. |
-| `APP_URL` | — | *prod*: public base URL |
+| `CORS_ORIGINS` | `*` (PocketBase) | *prod*: comma-separated absolute `https://` origins, no path. `http://` only with `ALLOW_INSECURE_HTTP=true` |
+| `PB_ENCRYPTION_KEY` | — | *prod*: 32 characters, at least 8 distinct, not a repeated character, and not a documented example (`openssl rand -hex 16`). `PB_ENCRYPTION_KEY_FILE` is also accepted |
+| `APP_URL` | — | *prod*: public base URL, `https://` required |
+| `ALLOW_INSECURE_HTTP` | `false` | *prod* escape hatch for private networks. Logs a warning |
 | `PB_DATA_DIR` | `./pb_data` | SQLite DBs, uploads, backups |
-| `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD` | — | created once if no superuser exists |
-| `SMTP_*`, `S3_*`, `BACKUPS_*` | disabled | feature turns on when `SMTP_HOST` / `S3_BUCKET` / `BACKUPS_CRON` is set |
-| `TRUSTED_PROXY_HEADERS` | — | e.g. `X-Forwarded-For` behind a load balancer |
-| `RATE_LIMIT_ENABLED` / `HIDE_CONTROLS` | `true` in prod | |
+| `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD` | — | created once if no superuser exists. Password also accepts `SUPERUSER_PASSWORD_FILE` |
+| `SUPERUSER_IPS` | empty | CIDRs applied on every boot, including clearing when unset |
+| `AUTH_SIGNUP` | unset | `closed`, `invite`, or `open`. Read so `SMTP_DISABLED` can require `closed`. The signup policy itself is a later change |
+| `SUPERUSER_MFA` | unset | `SMTP_DISABLED` requires `false` together with `SUPERUSER_IPS`. MFA enrollment is a later change |
+| `SMTP_*` | disabled | *prod*: `SMTP_HOST` is required. `SMTP_PASSWORD_FILE` is supported. `SMTP_TLS` defaults to on for port 465 and off otherwise |
+| `SMTP_DISABLED` | `false` | *prod* escape hatch, only when `AUTH_SIGNUP=closed`, `SUPERUSER_MFA=false`, and `SUPERUSER_IPS` is set. Logs a warning |
+| `S3_*` | local disk | turns on when `S3_BUCKET` is set. `S3_SECRET_FILE` is supported |
+| `BACKUPS_*` | off | turns on when `BACKUPS_CRON` is set. `BACKUPS_S3_SECRET` / `BACKUPS_S3_SECRET_FILE` sets the backups S3 secret when present |
+| `TRUSTED_PROXY_HEADERS` | — | *prod*: header list (for example `X-Forwarded-For`) or `none`. `none` clears stored headers and keeps leftmost-IP off |
+| `RATE_LIMIT_EXCLUDED_IPS` | empty | Applied on every boot, including clearing when unset. Listed IPs skip rate limiting entirely |
+| `RATE_LIMIT_ENABLED` / `HIDE_CONTROLS` | `true` in prod | *prod*: `false` is refused unless `ALLOW_INSECURE_OVERRIDES=true`, which logs a warning |
+| `ALLOW_INSECURE_OVERRIDES` | `false` | Allows those two toggles to be turned off |
+| `LOGS_MAX_DAYS` | `7` | |
 
-Settings-backed variables are applied on every start and override values saved in the
-dashboard. Unset variables leave the stored value alone.
+On every boot the process writes the environment over stored settings.
+`TRUSTED_PROXY_HEADERS`, `SUPERUSER_IPS`, and `RATE_LIMIT_EXCLUDED_IPS` always
+come from the environment, so removing one clears the stored list. Optional
+integrations (S3, the backup schedule) still keep the stored value when the
+variable is unset.
+
+In production those env-owned settings are locked at runtime. A superuser
+`PATCH /api/settings` that changes the trusted proxy, superuser IPs, rate
+limits (including excluded IPs), SMTP, S3, backups, batch, logs, or
+`hideControls` gets **403** and an audit log entry. If a stored value drifts,
+for example through a direct write to `_params`, the next settings reload puts
+the environment back and logs an alert. PocketBase itself allows these live
+edits; this template blocks them. Non-security meta such as the app name can
+still be edited in the dashboard.
+
+`/api/sql` is unchanged here. Restricting it in production is P0-5.
+
+On port 587, `SMTP_TLS` defaults to off. STARTTLS is then opportunistic: the
+server may upgrade the connection, and mail content can travel in clear if it
+does not. Port 465 defaults to implicit TLS. PocketBase will not send the SMTP
+password without TLS unless the server is on localhost.
+
+`PB_ENCRYPTION_KEY`, `SUPERUSER_PASSWORD`, `SMTP_PASSWORD`, `S3_SECRET`, and
+`BACKUPS_S3_SECRET` each accept a `_FILE` variant. The file contents are
+trimmed and used instead of the variable. Setting both forms is an error.
+`PB_ENCRYPTION_KEY_FILE` is copied into `PB_ENCRYPTION_KEY` because PocketBase
+reads that variable itself.
 
 CLI flags still work and take precedence, e.g. `./server serve --http=:9000`. Every
 PocketBase command is available: `./server superuser upsert ...`, `./server migrate ...`,
@@ -126,6 +171,7 @@ PocketBase command is available: `./server superuser upsert ...`, `./server migr
 | `GET /api/v1/ready` | readiness: the DB answers queries |
 | `GET /api/v1/version` | build version and commit |
 | `/api/collections/...`, `/api/realtime`, `/api/files/...`, `/api/batch` | [PocketBase Web API](https://pocketbase.io/docs/api-records/) |
+| `/api/sql` | PocketBase superuser SQL. Still open; P0-5 will restrict it in production |
 | `GET /api/v1/notes/stats`, `POST /api/v1/notes/import` | example custom routes (auth required) |
 | `/_/` | admin dashboard |
 
@@ -156,8 +202,11 @@ runtime digests.
 
 - [ ] Persist `/pb_data` on a durable volume, and back up `PB_ENCRYPTION_KEY` separately.
 - [ ] Put a TLS-terminating reverse proxy in front (Caddy, nginx, a cloud LB). Set
-      `TRUSTED_PROXY_HEADERS` so rate limits and logs see real client IPs.
-- [ ] Configure SMTP. Auth emails (verification, password reset, OTP) need it.
+      `TRUSTED_PROXY_HEADERS` to that proxy's client-IP header, or `none` when
+      nothing proxies the app. Production will not boot without one of the two.
+- [ ] Configure SMTP. Production requires `SMTP_HOST` unless `SMTP_DISABLED`
+      is set with signup closed, superuser MFA off, and `SUPERUSER_IPS` set.
+      Auth emails (verification, password reset, OTP) need SMTP.
 - [ ] Set `BACKUPS_CRON` (optionally with S3 backups via the dashboard), or stream the
       DB with [Litestream](https://litestream.io).
 - [ ] Use S3 for uploads if the host's disk is ephemeral.
