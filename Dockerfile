@@ -28,7 +28,7 @@ RUN mkdir -p /out/pb_data
 # ---- runtime ----------------------------------------------------------------
 # debian13 is the distroless line that still receives updates (debian12 is EOL).
 # static supplies ca-certificates for SMTP, S3 and OAuth2. Digest-pinned.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 
 COPY --from=build /out/server /app/server
 COPY --from=build --chown=65532:65532 /out/pb_data /pb_data
